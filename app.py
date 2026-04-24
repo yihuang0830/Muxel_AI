@@ -35,12 +35,12 @@ def load_config():
     show = json.loads((ROOT / "config" / "show_format.json").read_text())
     return {"host": host, "show": show}
 
-def load_chat(ep_dir):
-    f = ep_dir / "chat_step1.json"
+def load_chat(ep_dir, filename="chat_step1.json"):
+    f = ep_dir / filename
     return json.loads(f.read_text()) if f.exists() else []
 
-def save_chat(ep_dir, messages):
-    (ep_dir / "chat_step1.json").write_text(json.dumps(messages, ensure_ascii=False, indent=2))
+def save_chat(ep_dir, messages, filename="chat_step1.json"):
+    (ep_dir / filename).write_text(json.dumps(messages, ensure_ascii=False, indent=2))
 
 def list_episodes():
     if not EPISODES_DIR.exists():
@@ -133,23 +133,113 @@ if current_step == 1:
 
         st.divider()
 
-        # 显示对话
+        # 显示历史对话
         for msg in chat_history:
-            role_label = "你" if msg["role"] == "user" else "助理"
-            with st.chat_message(msg["role"] if msg["role"] == "assistant" else "user"):
+            with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
                 st.markdown(msg["content"])
 
-        # 继续对话
+        # 继续对话：用户消息立刻渲染，再等 LLM
         user_input = st.chat_input("哪里不对？补充一下……")
         if user_input:
+            with st.chat_message("user"):
+                st.markdown(user_input)
+            chat_history.append({"role": "user", "content": user_input})
+
             config = load_config()
             from pipeline.step1_topics import chat_reply
-            chat_history.append({"role": "user", "content": user_input})
-            with st.spinner(""):
-                reply = chat_reply(chat_history, config["show"])
+            with st.chat_message("assistant"):
+                with st.spinner(""):
+                    reply = chat_reply(chat_history, config["show"])
+                st.markdown(reply)
             chat_history.append({"role": "assistant", "content": reply})
             save_chat(ep_dir, chat_history)
             st.rerun()
+
+# ── Step 2：小张的歌单 ────────────────────────────────────────────
+elif current_step == 2:
+    import pandas as pd
+    playlist_file = ep_dir / "02_playlist.json"
+    config = load_config()
+
+    st.markdown("### 小张的歌单")
+
+    # 还没生成 → 先让小张出手
+    if not playlist_file.exists():
+        st.caption("小张会根据你确认的方向推荐 10 首歌")
+        if st.button("让小张来推 →", type="primary"):
+            from pipeline.step2_playlist import generate
+            with st.spinner("小张选歌中…"):
+                generate(ep_dir, config["show"])
+            st.rerun()
+
+    else:
+        playlist = json.loads(playlist_file.read_text())
+        songs = playlist.get("songs", [])
+
+        col_table, col_chat = st.columns([3, 2])
+
+        # ── 左：只读歌单表格 ──────────────────────────────────
+        with col_table:
+            st.caption(f"主题：{playlist.get('theme_summary', '')}　·　共 {len(songs)} 首")
+
+            df = pd.DataFrame([{
+                "#": i + 1,
+                "歌名": s.get("title", ""),
+                "艺人": s.get("artist", ""),
+                "小张的理由": s.get("reason", ""),
+            } for i, s in enumerate(songs)])
+
+            st.dataframe(df, use_container_width=True, hide_index=True)
+
+            if st.button("✅ 歌单确认，进入稿本", type="primary", use_container_width=True):
+                status["current_step"] = 3
+                save_status(ep_dir, status)
+                st.rerun()
+
+        # ── 右：和小张对话 ────────────────────────────────────
+        with col_chat:
+            st.caption("告诉小张要加什么、删什么，他会直接更新左边的歌单")
+
+            chat2 = load_chat(ep_dir, "chat_step2.json")
+            chat_box = st.container(height=480)
+            with chat_box:
+                for msg in chat2:
+                    with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
+                        st.markdown(msg["content"])
+
+            user_input = st.chat_input("跟小张说……")
+            if user_input:
+                from pipeline.step2_playlist import chat_reply
+                current_playlist = json.loads(playlist_file.read_text())
+
+                with chat_box:
+                    with st.chat_message("user"):
+                        st.markdown(user_input)
+                chat2.append({"role": "user", "content": user_input})
+
+                with chat_box:
+                    with st.chat_message("assistant"):
+                        with st.spinner("小张想了想…"):
+                            reply, add_songs, remove_titles, reorder_titles = chat_reply(chat2, current_playlist, config["show"])
+                        st.markdown(reply)
+                chat2.append({"role": "assistant", "content": reply})
+                save_chat(ep_dir, chat2, "chat_step2.json")
+
+                # 应用小张的修改
+                updated = current_playlist["songs"]
+                if remove_titles:
+                    updated = [s for s in updated if s["title"] not in remove_titles]
+                if add_songs:
+                    updated = updated + add_songs
+                if reorder_titles:
+                    song_map = {s["title"]: s for s in updated}
+                    updated = [song_map[t] for t in reorder_titles if t in song_map]
+                    # 把 reorder 里没提到的歌追加到末尾（防止漏掉）
+                    mentioned = set(reorder_titles)
+                    updated += [s for s in current_playlist["songs"] if s["title"] not in mentioned]
+                current_playlist["songs"] = updated
+                playlist_file.write_text(json.dumps(current_playlist, ensure_ascii=False, indent=2))
+                st.rerun()
 
 # ── 其他审批步骤 ──────────────────────────────────────────────────
 elif current_step in APPROVAL_FILES:

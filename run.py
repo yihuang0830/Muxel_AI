@@ -82,17 +82,12 @@ def cmd_next(ep_id: str) -> None:
         print(f"⚠️  Step {next_step} 尚未实现，敬请期待")
         return
 
-    print(f"▶️  当前进度：Step {current}（{STEPS[current]}）已审批，进入 Step {next_step}（{STEPS[next_step]}）")
+    print(f"▶️  Step {current}（{STEPS[current]}）已完成，进入 Step {next_step}（{STEPS[next_step]}）")
 
-    # 更新 current_step
     status["current_step"] = next_step
     status_file.write_text(json.dumps(status, ensure_ascii=False, indent=2))
 
-    # 调用对应 step
-    config = _load_config()
-    if next_step == 2:
-        print("⚠️  Step 2（歌单）尚未实现，敬请期待")
-    else:
+    if next_step > 3:
         print(f"⚠️  Step {next_step}（{STEPS[next_step]}）尚未实现，敬请期待")
 
 
