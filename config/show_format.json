@@ -1,0 +1,8 @@
+{
+  "name_cn": "像素电台",
+  "name_en": "Pixel Radio",
+  "style_description": "独立音乐探索电台，关注小众、有深度的音乐，不追热门，只追动人",
+  "songs_per_episode": 10,
+  "target_duration_minutes": 75,
+  "music_source": "royalty-free"
+}
