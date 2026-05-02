@@ -46,3 +46,27 @@ def generate(ep_dir: Path, host: dict, show: dict) -> None:
     )
 
     (ep_dir / "03_script_cn.md").write_text(response.choices[0].message.content)
+
+
+def chat_reply(messages: list[dict], current_script: str, host: dict, show: dict) -> str:
+    """导演给反馈，小像根据反馈修改稿子，返回完整新稿。"""
+    system = f"""你是「{show['name_cn']}」的电台主持人，名叫{host['name_cn']}。
+{host['description_cn']}。说话风格：{host['style_cn']}。
+
+你刚写完了这期节目的主持稿，导演看完给了一些反馈。
+请根据导演的要求修改稿子，输出完整的修改后版本。
+
+当前稿子：
+{current_script}
+
+注意：
+- 直接输出完整稿子，不要说「好的我修改了xxx」之类的前缀
+- 保持你的说话风格，不要变成另一个人
+- 导演没提到的部分保持原样"""
+
+    response = _client().chat.completions.create(
+        model="qwen-plus",
+        messages=[{"role": "system", "content": system}] + messages,
+        max_tokens=5000,
+    )
+    return response.choices[0].message.content

@@ -30,10 +30,15 @@ def load_status(ep_dir):
 def save_status(ep_dir, status):
     (ep_dir / "STATUS.json").write_text(json.dumps(status, ensure_ascii=False, indent=2))
 
-def load_config():
-    host = json.loads((ROOT / "config" / "host_persona.json").read_text())
+def load_config(host_id: str = None) -> dict:
     show = json.loads((ROOT / "config" / "show_format.json").read_text())
-    return {"host": host, "show": show}
+    hosts_data = json.loads((ROOT / "config" / "hosts.json").read_text())
+    hosts = hosts_data["hosts"]
+    if host_id:
+        host = next((h for h in hosts if h["id"] == host_id), hosts[0])
+    else:
+        host = next((h for h in hosts if h["available"]), hosts[0])
+    return {"host": host, "show": show, "all_hosts": hosts}
 
 def load_chat(ep_dir, filename="chat_step1.json"):
     f = ep_dir / filename
@@ -250,38 +255,90 @@ elif current_step == 2:
                 playlist_file.write_text(json.dumps(current_playlist, ensure_ascii=False, indent=2))
                 st.rerun()
 
-# ── Step 3：像素写稿 ──────────────────────────────────────────────
+# ── Step 3：主持稿 ────────────────────────────────────────────────
 elif current_step == 3:
     script_file = ep_dir / "03_script_cn.md"
-    config = load_config()
+    host_id = status.get("host_id")
+    config = load_config(host_id)
 
-    st.markdown("### 像素的主持稿")
+    st.markdown("### 主持稿")
 
-    if not script_file.exists():
-        st.caption("像素会根据选题方向和歌单写完整主持稿")
-        if st.button("让像素来写 →", type="primary"):
-            from pipeline.step3_script import generate
-            with st.spinner("像素写稿中…"):
-                generate(ep_dir, config["host"], config["show"])
-            st.rerun()
+    # ── 选主持人 ──────────────────────────────────────────────────
+    if not host_id:
+        st.markdown("#### 先选一位主持人")
+        cols = st.columns(len(config["all_hosts"]))
+        for i, h in enumerate(config["all_hosts"]):
+            with cols[i]:
+                with st.container(border=True):
+                    st.markdown(f"**{h['name_cn']}**　{'♂' if h['gender']=='male' else '♀'}")
+                    if h["available"]:
+                        st.caption(h["description_cn"])
+                        if st.button(f"选{h['name_cn']}", key=f"pick_{h['id']}", type="primary", use_container_width=True):
+                            status["host_id"] = h["id"]
+                            save_status(ep_dir, status)
+                            st.rerun()
+                    else:
+                        st.caption(f"🔒 {h['description_cn']}")
+
+    # ── 已选主持人：写稿 / 双栏 ──────────────────────────────────
     else:
-        script = script_file.read_text()
-        edited = st.text_area(
-            "稿本", value=script, height=600, label_visibility="collapsed"
-        )
-        col1, col2, col3 = st.columns([1, 1, 3])
-        with col1:
-            if st.button("✅ 稿本确认，继续", type="primary", use_container_width=True):
-                script_file.write_text(edited)
-                status["current_step"] = 4
-                save_status(ep_dir, status)
+        host = config["host"]
+
+        if not script_file.exists():
+            st.caption(f"主持人：{host['name_cn']}　·　将根据选题方向和歌单生成完整主持稿")
+            if st.button(f"让{host['name_cn']}来写 →", type="primary"):
+                from pipeline.step3_script import generate
+                with st.spinner(f"{host['name_cn']}写稿中…"):
+                    generate(ep_dir, host, config["show"])
                 st.rerun()
-        with col2:
-            if st.button("重新生成", use_container_width=True):
-                script_file.unlink()
-                st.rerun()
-        with col3:
-            st.caption("可直接在上方编辑，点「重新生成」让像素再写一版")
+        else:
+            col_script, col_chat = st.columns([3, 2])
+
+            with col_script:
+                st.caption(f"主持人：{host['name_cn']}　·　可直接编辑，或在右边跟{host['name_cn']}说修改意见")
+                script = script_file.read_text()
+                edited = st.text_area("稿本", value=script, height=560, label_visibility="collapsed")
+
+                c1, c2 = st.columns(2)
+                with c1:
+                    if st.button("✅ 稿本确认，继续", type="primary", use_container_width=True):
+                        script_file.write_text(edited)
+                        status["current_step"] = 4
+                        save_status(ep_dir, status)
+                        st.rerun()
+                with c2:
+                    if st.button("重新生成", use_container_width=True):
+                        script_file.unlink()
+                        st.rerun()
+
+            with col_chat:
+                st.caption(f"告诉{host['name_cn']}哪里需要改，他会输出完整修改版")
+                chat3 = load_chat(ep_dir, "chat_step3.json")
+                chat_box = st.container(height=500)
+                with chat_box:
+                    for msg in chat3:
+                        with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
+                            st.markdown(msg["content"])
+
+                user_input = st.chat_input(f"跟{host['name_cn']}说…")
+                if user_input:
+                    from pipeline.step3_script import chat_reply
+                    current_script = script_file.read_text()
+
+                    with chat_box:
+                        with st.chat_message("user"):
+                            st.markdown(user_input)
+                    chat3.append({"role": "user", "content": user_input})
+
+                    with chat_box:
+                        with st.chat_message("assistant"):
+                            with st.spinner(f"{host['name_cn']}改稿中…"):
+                                new_script = chat_reply(chat3, current_script, host, config["show"])
+                            st.markdown("✏️ 稿子已更新，请查看左侧。")
+                    chat3.append({"role": "assistant", "content": "✏️ 稿子已更新，请查看左侧。"})
+                    save_chat(ep_dir, chat3, "chat_step3.json")
+                    script_file.write_text(new_script)
+                    st.rerun()
 
 # ── 其他审批步骤 ──────────────────────────────────────────────────
 elif current_step in APPROVAL_FILES:
