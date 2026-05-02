@@ -28,10 +28,12 @@ def generate(ep_dir: Path, show: dict, song_count: int = 10) -> None:
 
     # 1. 从方向提取 Last.fm tags，查询真实候选曲库
     candidates_section = ""
+    lastfm_meta = {"tags": [], "candidate_count": 0}
     try:
         tags = extract_tags_from_direction(topic_direction, show["style_description"])
         candidates = search_by_tags(tags, limit=50)
         if candidates:
+            lastfm_meta = {"tags": tags, "candidate_count": len(candidates)}
             candidates_section = f"\n\n以下是根据风格标签（{', '.join(tags)}）从音乐数据库找到的真实曲目，请优先从中挑选：\n{_format_candidates(candidates)}\n\n如果候选里没有合适的，可以补充你认为适合的歌曲。"
     except Exception:
         pass  # Last.fm 不可用时降级为纯 LLM 模式
@@ -56,6 +58,7 @@ def generate(ep_dir: Path, show: dict, song_count: int = 10) -> None:
         raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
 
     playlist = json.loads(raw)
+    playlist["_lastfm"] = lastfm_meta
     (ep_dir / "02_playlist.json").write_text(
         json.dumps(playlist, ensure_ascii=False, indent=2)
     )

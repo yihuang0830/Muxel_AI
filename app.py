@@ -81,7 +81,10 @@ cols = st.columns(len(STEPS))
 for i, (num, name) in enumerate(STEPS.items()):
     with cols[i]:
         if num < current_step:
-            st.markdown(f"✅ **{name}**")
+            if st.button(f"✅ {name}", key=f"nav_{num}", help=f"回到{name}"):
+                status["current_step"] = num
+                save_status(ep_dir, status)
+                st.rerun()
         elif num == current_step:
             st.markdown(f"⏳ **{name}**")
         else:
@@ -180,7 +183,13 @@ elif current_step == 2:
 
         # ── 左：只读歌单表格 ──────────────────────────────────
         with col_table:
-            st.caption(f"主题：{playlist.get('theme_summary', '')}　·　共 {len(songs)} 首")
+            lastfm = playlist.get("_lastfm", {})
+            if lastfm.get("candidate_count"):
+                tags_str = "、".join(lastfm["tags"])
+                lastfm_note = f"　·　Last.fm ✅ {lastfm['candidate_count']} 首候选（{tags_str}）"
+            else:
+                lastfm_note = "　·　Last.fm 未启用"
+            st.caption(f"主题：{playlist.get('theme_summary', '')}　·　共 {len(songs)} 首{lastfm_note}")
 
             df = pd.DataFrame([{
                 "#": i + 1,
@@ -240,6 +249,39 @@ elif current_step == 2:
                 current_playlist["songs"] = updated
                 playlist_file.write_text(json.dumps(current_playlist, ensure_ascii=False, indent=2))
                 st.rerun()
+
+# ── Step 3：像素写稿 ──────────────────────────────────────────────
+elif current_step == 3:
+    script_file = ep_dir / "03_script_cn.md"
+    config = load_config()
+
+    st.markdown("### 像素的主持稿")
+
+    if not script_file.exists():
+        st.caption("像素会根据选题方向和歌单写完整主持稿")
+        if st.button("让像素来写 →", type="primary"):
+            from pipeline.step3_script import generate
+            with st.spinner("像素写稿中…"):
+                generate(ep_dir, config["host"], config["show"])
+            st.rerun()
+    else:
+        script = script_file.read_text()
+        edited = st.text_area(
+            "稿本", value=script, height=600, label_visibility="collapsed"
+        )
+        col1, col2, col3 = st.columns([1, 1, 3])
+        with col1:
+            if st.button("✅ 稿本确认，继续", type="primary", use_container_width=True):
+                script_file.write_text(edited)
+                status["current_step"] = 4
+                save_status(ep_dir, status)
+                st.rerun()
+        with col2:
+            if st.button("重新生成", use_container_width=True):
+                script_file.unlink()
+                st.rerun()
+        with col3:
+            st.caption("可直接在上方编辑，点「重新生成」让像素再写一版")
 
 # ── 其他审批步骤 ──────────────────────────────────────────────────
 elif current_step in APPROVAL_FILES:
