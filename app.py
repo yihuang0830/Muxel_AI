@@ -13,7 +13,7 @@ EPISODES_DIR = ROOT / "episodes"
 
 STEPS = {
     1: "选题", 2: "歌单", 3: "稿本",
-    4: "视觉素材", 5: "配音", 6: "视频合成",
+    4: "视觉素材", 5: "配音", 6: "去 PR 合成",
     7: "上传文案", 8: "发布",
 }
 APPROVAL_FILES = {
@@ -339,6 +339,93 @@ elif current_step == 3:
                     save_chat(ep_dir, chat3, "chat_step3.json")
                     script_file.write_text(new_script)
                     st.rerun()
+
+# ── Step 6：去 PR 合成 ────────────────────────────────────────────
+elif current_step == 6:
+    st.markdown("### 去 Premiere Pro 合成视频")
+    st.caption("把下面的素材导入 PR，合成完成后点继续。")
+
+    assets = [
+        ("🎙️ 主持稿（配音用）", "03_script_cn.md"),
+        ("🎵 歌单", "02_playlist.json"),
+        ("🖼️ 封面图", "04_thumbnail.png"),
+    ]
+    for label, fname in assets:
+        fpath = ep_dir / fname
+        if fpath.exists():
+            st.markdown(f"- {label}　`episodes/{selected}/{fname}` ✅")
+        else:
+            st.markdown(f"- {label}　`episodes/{selected}/{fname}` _(未生成)_")
+
+    st.divider()
+    if st.button("✅ 视频已合成，继续上传文案", type="primary"):
+        status["current_step"] = 7
+        save_status(ep_dir, status)
+        st.rerun()
+
+# ── Step 7：上传文案 ──────────────────────────────────────────────
+elif current_step == 7:
+    metadata_file = ep_dir / "07_metadata.md"
+    config = load_config(status.get("host_id"))
+
+    st.markdown("### B站 上传文案")
+
+    if not metadata_file.exists():
+        st.caption("将根据选题、歌单、稿本自动生成标题、简介、标签")
+        if st.button("生成文案 →", type="primary"):
+            from pipeline.step7_metadata import generate
+            with st.spinner("生成中…"):
+                generate(ep_dir, config["show"])
+            st.rerun()
+    else:
+        col_text, col_chat = st.columns([3, 2])
+
+        with col_text:
+            st.caption("可直接编辑，或在右边告诉 AI 哪里要改")
+            edited = st.text_area(
+                "文案", value=metadata_file.read_text(),
+                height=520, label_visibility="collapsed"
+            )
+            c1, c2 = st.columns(2)
+            with c1:
+                if st.button("✅ 文案确认，完成", type="primary", use_container_width=True):
+                    metadata_file.write_text(edited)
+                    status["current_step"] = 8
+                    save_status(ep_dir, status)
+                    st.rerun()
+            with c2:
+                if st.button("重新生成", use_container_width=True):
+                    metadata_file.unlink()
+                    st.rerun()
+
+        with col_chat:
+            st.caption("告诉 AI 哪里要改，它会重写完整文案")
+            chat7 = load_chat(ep_dir, "chat_step7.json")
+            chat_box = st.container(height=460)
+            with chat_box:
+                for msg in chat7:
+                    with st.chat_message("assistant" if msg["role"] == "assistant" else "user"):
+                        st.markdown(msg["content"])
+
+            user_input = st.chat_input("说说哪里要改…")
+            if user_input:
+                from pipeline.step7_metadata import chat_reply
+                current_meta = metadata_file.read_text()
+
+                with chat_box:
+                    with st.chat_message("user"):
+                        st.markdown(user_input)
+                chat7.append({"role": "user", "content": user_input})
+
+                with chat_box:
+                    with st.chat_message("assistant"):
+                        with st.spinner("改中…"):
+                            new_meta = chat_reply(chat7, current_meta, config["show"], ep_dir)
+                        st.markdown("✏️ 文案已更新，请查看左侧。")
+                chat7.append({"role": "assistant", "content": "✏️ 文案已更新，请查看左侧。"})
+                save_chat(ep_dir, chat7, "chat_step7.json")
+                metadata_file.write_text(new_meta)
+                st.rerun()
 
 # ── 其他审批步骤 ──────────────────────────────────────────────────
 elif current_step in APPROVAL_FILES:
