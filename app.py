@@ -340,6 +340,42 @@ elif current_step == 3:
                     script_file.write_text(new_script)
                     st.rerun()
 
+# ── Step 5：配音 ─────────────────────────────────────────────────
+elif current_step == 5:
+    config = load_config(status.get("host_id"))
+    host = config["host"]
+    voice_file = ep_dir / "05_voiceover.mp3"
+
+    st.markdown("### 配音生成")
+
+    from pipeline.step5_voiceover import VOICE_MAP
+    voice_name = VOICE_MAP.get(host.get("gender", "male"), VOICE_MAP["male"])
+    st.caption(f"主持人：{host['name_cn']}　｜　声音：`{voice_name}`")
+
+    if not voice_file.exists():
+        script_file = ep_dir / "03_script_cn.md"
+        if not script_file.exists():
+            st.error("找不到稿本，请先完成 Step 3。")
+        else:
+            st.info("将根据稿本（去掉音乐标记）生成主持人配音。")
+            if st.button("生成配音 →", type="primary"):
+                from pipeline.step5_voiceover import generate
+                with st.spinner("合成中，稿子较长可能需要 1-2 分钟…"):
+                    generate(ep_dir, host)
+                st.rerun()
+    else:
+        st.audio(str(voice_file), format="audio/mp3")
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("✅ 配音确认，继续", type="primary", use_container_width=True):
+                status["current_step"] = 6
+                save_status(ep_dir, status)
+                st.rerun()
+        with c2:
+            if st.button("重新生成", use_container_width=True):
+                voice_file.unlink()
+                st.rerun()
+
 # ── Step 6：去 PR 合成 ────────────────────────────────────────────
 elif current_step == 6:
     st.markdown("### 去 Premiere Pro 合成视频")
